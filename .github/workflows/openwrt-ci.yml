@@ -33,7 +33,6 @@ jobs:
       - name: Checkout
         uses: actions/upload-artifact@v4
         with:
-          ref: master
 
       - name: Space cleanup
         env:
@@ -145,7 +144,7 @@ jobs:
           path: ./bin/targets/
 
       - name: Upload release asset
-        if: github.event == 'release'
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
           repo_token: ${{ secrets.YOURTOKEN }}
