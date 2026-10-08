@@ -1,1 +1,78 @@
+name: Build uugamebooster for aarch64_cortex-a53
 
+on:
+  workflow_dispatch:  # 支持手动触发
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout LEDE source
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache ecj fastjar file g++ gawk \
+            gettext git java-propose-classpath libelf-dev libncurses5-dev \
+            libncursesw5-dev libssl-dev python3 python3-distutils python3-setuptools \
+            rsync subversion swig time xsltproc zlib1g-dev unzip wget
+
+      - name: Update feeds
+        run: |
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+
+      # ========== 关键步骤：手动下载 UU 加速器预编译包 ==========
+      # 绕过官方 download.pl 脚本的 403 问题
+      - name: Pre-download uugamebooster binary
+        run: |
+          mkdir -p dl
+          # aarch64 架构的 UU 加速器包地址
+          UU_URL="https://uu.gdl.netease.com/uuplugin/openwrt-aarch64/v3.15.0/uu.tar.gz"
+          # 重命名为 LEDE 编译系统期望的文件名格式
+          wget --no-check-certificate -O dl/uugamebooster-aarch64-v3.15.0.tar.gz "$UU_URL" || true
+          # 如果下载失败，尝试从 OpenWrt 官方镜像源获取
+          if [ ! -s dl/uugamebooster-aarch64-v3.15.0.tar.gz ]; then
+            wget --no-check-certificate -O dl/uugamebooster-aarch64-v3.15.0.tar.gz \
+              "https://sources.openwrt.org/uugamebooster-aarch64-v3.15.0.tar.gz" || true
+          fi
+          ls -la dl/
+
+      - name: Configure target
+        run: |
+          # 选择 aarch64_cortex-a53 目标（以 rockchip/armv8 为例，请根据实际设备调整）
+          echo "CONFIG_TARGET_rockchip=y" >> .config
+          echo "CONFIG_TARGET_rockchip_armv8=y" >> .config
+          echo "CONFIG_TARGET_rockchip_armv8_DEVICE_generic=y" >> .config
+          # 启用 nftables (FW4) 支持
+          echo "CONFIG_PACKAGE_nftables=y" >> .config
+          echo "CONFIG_PACKAGE_firewall4=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-nft-core=y" >> .config
+          echo "CONFIG_PACKAGE_kmod-nft-nat=y" >> .config
+          # 启用 TUN 支持（UU 加速器依赖）
+          echo "CONFIG_PACKAGE_kmod-tun=y" >> .config
+          # 启用 UU 加速器插件
+          echo "CONFIG_PACKAGE_luci-app-uugamebooster=y" >> .config
+          echo "CONFIG_PACKAGE_luci-i18n-uugamebooster-zh-cn=y" >> .config
+          echo "CONFIG_PACKAGE_uugamebooster=y" >> .config
+
+      - name: Generate full config
+        run: |
+          make defconfig
+
+      - name: Verify config
+        run: |
+          grep -E "uugamebooster|firewall4|nftables|kmod-tun" .config || true
+
+      - name: Download package
+        run: |
+          make download -j8
+
+      - name: Build
+        run: |
+          make -j$(nproc) V=s || make -j1 V=s
