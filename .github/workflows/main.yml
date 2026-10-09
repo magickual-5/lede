@@ -91,14 +91,8 @@ jobs:
       - name: Compile UU packages
         run: |
           cd openwrt
-          make package/uugamebooster/compile \
-               package/luci-app-uugamebooster/compile \
-               package/luci-i18n-uugamebooster-zh-cn/compile \
-               V=s -j$(nproc) || \
-          make package/uugamebooster/compile \
-               package/luci-app-uugamebooster/compile \
-               package/luci-i18n-uugamebooster-zh-cn/compile \
-               V=s -j1
+          make package/uugamebooster/compile package/luci-app-uugamebooster/compile V=s -j$(nproc) || \
+          make package/uugamebooster/compile package/luci-app-uugamebooster/compile V=s -j1
 
       - name: Upload IPK
         uses: actions/upload-artifact@v4
