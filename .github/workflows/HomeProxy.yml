@@ -1,0 +1,106 @@
+name: Build IPK for HomeProxy (OpenWrt 25.12 aarch64_cortex-a53)
+
+on:
+  push:
+    branches:
+      - 'master'
+      - 'dev'
+    paths:
+      - 'htdocs/**'
+      - 'po/**'
+      - 'root/**'
+      - 'Makefile'
+      - '.github/**'
+      - '!.github/ISSUE_TEMPLATE/**'
+
+  pull_request:
+    branches:
+      - 'master'
+      - 'dev'
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - 'htdocs/**'
+      - 'root/**'
+      - 'Makefile'
+      - '.github/**'
+      - '!.github/ISSUE_TEMPLATE/**'
+
+  release:
+    types:
+      - published
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout source tree
+        uses: actions/checkout@v6
+
+      # --- 第1步：下载并解压 OpenWrt SDK ---
+      - name: Download and extract OpenWrt SDK
+        run: |
+          # 使用 OpenWrt 25.12 的 SDK，aarch64_cortex-a53 架构
+          # 请根据实际可用的 SDK 版本调整 URL，这里以 25.12.0 为例
+          SDK_URL="https://downloads.openwrt.org/releases/25.12.0/targets/mediatek/filogic/openwrt-sdk-25.12.0-mediatek-filogic_gcc-14.3.0_musl.Linux-x86_64.tar.zst"
+          wget -q "$SDK_URL" -O sdk.tar.zst
+          tar --zstd -xf sdk.tar.zst
+          mv openwrt-sdk-* sdk
+          echo "SDK_DIR=$PWD/sdk" >> $GITHUB_ENV
+        # 注意：如果 SDK 压缩包是 .tar.xz 格式，请将 --zstd 改为 -xf，并去掉 .zst 后缀
+
+      # --- 第2步：将 HomeProxy 源码放入 SDK 的 package 目录 ---
+      - name: Prepare package source
+        run: |
+          mkdir -p sdk/package/luci-app-homeproxy
+          # 复制当前仓库的所有文件到 SDK 的 package 目录
+          # 如果你的源码根目录就是包目录，则直接复制；否则需要调整路径
+          cp -r ./* sdk/package/luci-app-homeproxy/
+
+      # --- 第3步：配置并编译 IPK ---
+      - name: Build IPK with SDK
+        run: |
+          cd sdk
+          # 更新 feeds（可选，但推荐）
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
+          # 生成配置文件，只选中我们的包及其依赖
+          make defconfig
+          
+          # 编译 luci-app-homeproxy 包
+          # V=s 显示详细输出，-j$(nproc) 使用多核加速
+          make package/luci-app-homeproxy/compile V=s -j$(nproc)
+          
+          # 找到生成的 IPK 文件并复制到工作目录
+          find bin/ -name "*.ipk" -exec cp {} $GITHUB_WORKSPACE/ \;
+          
+          # 设置环境变量供后续步骤使用
+          IPK_FILE=$(ls $GITHUB_WORKSPACE/*.ipk | head -n 1)
+          if [ -z "$IPK_FILE" ]; then
+            echo "错误：未找到生成的 IPK 文件"
+            exit 1
+          fi
+          echo "IPK_ASSET_NAME=$(basename $IPK_FILE)" >> $GITHUB_ENV
+
+      # --- 第4步：上传 IPK 到 GitHub Artifacts (非 release 事件) ---
+      - name: Publishing IPK files to GitHub Artifacts
+        uses: actions/upload-artifact@v7
+        if: github.event_name != 'release'
+        with:
+          name: ${{ env.IPK_ASSET_NAME }}
+          path: ${{ github.workspace }}/${{ env.IPK_ASSET_NAME }}
+          archive: false
+
+      # --- 第5步：发布到 GitHub Releases (release 事件) ---
+      - name: Publishing to GitHub Releases
+        uses: svenstaro/upload-release-action@v2
+        if: github.event_name == 'release'
+        with:
+          repo_token: ${{ github.token }}
+          file: ${{ github.workspace }}/${{ env.IPK_ASSET_NAME }}
+          asset_name: ${{ env.IPK_ASSET_NAME }}
+          tag: ${{ github.ref }}
